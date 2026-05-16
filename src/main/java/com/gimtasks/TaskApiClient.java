@@ -134,7 +134,7 @@ public class TaskApiClient {
         try {
             executor.awaitTermination(5, TimeUnit.SECONDS);
         } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
+            // Shutdown interrupted; executor will terminate shortly
         }
     }
 
