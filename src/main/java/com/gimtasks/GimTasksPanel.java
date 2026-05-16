@@ -30,10 +30,13 @@ public class GimTasksPanel extends PluginPanel {
     private static final Color COLOR_SUBTEXT     = new Color(150, 150, 150);
 
     private static final String[] SKILLS = {
-        "ATTACK","STRENGTH","DEFENCE","RANGED","PRAYER","MAGIC","RUNECRAFTING",
-        "HITPOINTS","CRAFTING","MINING","SMITHING","FISHING","COOKING",
-        "FIREMAKING","WOODCUTTING","AGILITY","HERBLORE","THIEVING","FLETCHING",
-        "SLAYER","FARMING","CONSTRUCTION","HUNTER","SAILING","OTHER"
+        // Column 1
+        "ATTACK","STRENGTH","DEFENCE","RANGED","PRAYER","MAGIC","RUNECRAFTING","CONSTRUCTION",
+        // Column 2
+        "HITPOINTS","AGILITY","HERBLORE","THIEVING","CRAFTING","FLETCHING","SLAYER","HUNTER",
+        // Column 3
+        "MINING","SMITHING","FISHING","COOKING","FIREMAKING","WOODCUTTING","FARMING","SAILING",
+        "OTHER"
     };
 
     private final TaskApiClient apiClient;
