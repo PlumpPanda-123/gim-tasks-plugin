@@ -60,6 +60,7 @@ public class GimTasksPanel extends PluginPanel {
 
     public GimTasksPanel(TaskApiClient apiClient, GimTasksConfig config,
                          SkillIconManager skillIconManager, Runnable refreshCallback) {
+        super(false); // we manage our own scroll pane; prevents RuneLite double-wrapping
         this.apiClient        = apiClient;
         this.config           = config;
         this.skillIconManager = skillIconManager;
@@ -75,13 +76,23 @@ public class GimTasksPanel extends PluginPanel {
         taskListPanel.setLayout(new BoxLayout(taskListPanel, BoxLayout.Y_AXIS));
         taskListPanel.setBackground(COLOR_PANEL_BG);
 
-        scroll = new JScrollPane(taskListPanel);
+        // Wrap in a top-anchored panel so tasks don't stretch to fill empty space
+        JPanel taskListWrapper = new JPanel(new BorderLayout());
+        taskListWrapper.setBackground(COLOR_PANEL_BG);
+        taskListWrapper.add(taskListPanel, BorderLayout.NORTH);
+
+        scroll = new JScrollPane(taskListWrapper);
         scroll.setBorder(null);
         scroll.setBackground(COLOR_PANEL_BG);
         scroll.getViewport().setBackground(COLOR_PANEL_BG);
         scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setWheelScrollingEnabled(true);
         scroll.getVerticalScrollBar().setUnitIncrement(16);
+        // RuneLite's PluginPanel intercepts mouse wheel — forward events explicitly
+        scroll.addMouseWheelListener(e -> {
+            JScrollBar bar = scroll.getVerticalScrollBar();
+            bar.setValue(bar.getValue() + (int)(e.getPreciseWheelRotation() * bar.getUnitIncrement() * 3));
+        });
         add(scroll, BorderLayout.CENTER);
 
         memberBar = buildMemberBar(new ArrayList<>());
@@ -274,11 +285,13 @@ public class GimTasksPanel extends PluginPanel {
         JLabel nameLabel = new JLabel("<html>" + task.getName() + "</html>");
         nameLabel.setForeground(Color.WHITE);
         nameLabel.setFont(nameLabel.getFont().deriveFont(Font.BOLD, 18f));
+        nameLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         topSection.add(nameLabel);
 
         if (task.isUrgent()) {
             JPanel urgentRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
             urgentRow.setBackground(COLOR_CARD_BG);
+            urgentRow.setAlignmentX(Component.LEFT_ALIGNMENT);
             urgentRow.add(badge("⚠ URGENT", COLOR_URGENT));
             topSection.add(urgentRow);
         }
@@ -493,7 +506,9 @@ public class GimTasksPanel extends PluginPanel {
 
     private BufferedImage getSkillIcon(String skillName) {
         try {
-            Skill skill = Skill.valueOf(skillName.toUpperCase());
+            // RuneLite's enum is RUNECRAFT but we store/display RUNECRAFTING
+            String enumName = "RUNECRAFTING".equalsIgnoreCase(skillName) ? "RUNECRAFT" : skillName.toUpperCase();
+            Skill skill = Skill.valueOf(enumName);
             return skillIconManager.getSkillImage(skill, true);
         } catch (Exception e) {
             return null;
