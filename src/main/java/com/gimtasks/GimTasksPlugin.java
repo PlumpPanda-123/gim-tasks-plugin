@@ -8,6 +8,7 @@ import net.runelite.api.Client;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -37,6 +38,7 @@ public class GimTasksPlugin extends Plugin {
     @Inject private GimTasksConfig config;
     @Inject private GimTasksOverlay overlay;
     @Inject private OverlayManager overlayManager;
+    @Inject private SkillIconManager skillIconManager;
     @Inject private OkHttpClient okHttpClient;
     @Inject private Gson gson;
 
@@ -57,11 +59,12 @@ public class GimTasksPlugin extends Plugin {
     protected void startUp() {
         apiClient = new TaskApiClient(okHttpClient, gson, config);
 
-        panel = new GimTasksPanel(apiClient, config, this::pollNow);
+        panel = new GimTasksPanel(apiClient, config, skillIconManager, this::pollNow);
 
-        // Load or create a placeholder icon
-        BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/com/gimtasks/icon.png");
-        if (icon == null) {
+        BufferedImage icon;
+        try {
+            icon = ImageUtil.loadImageResource(getClass(), "icon.png");
+        } catch (IllegalArgumentException e) {
             icon = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
         }
 

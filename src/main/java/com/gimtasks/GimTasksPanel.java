@@ -2,12 +2,15 @@ package com.gimtasks;
 
 import com.gimtasks.models.GroupMember;
 import com.gimtasks.models.Task;
+import net.runelite.api.Skill;
+import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.ui.PluginPanel;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.ActionEvent;
+import java.awt.image.BufferedImage;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -30,15 +33,17 @@ public class GimTasksPanel extends PluginPanel {
         "ATTACK","STRENGTH","DEFENCE","RANGED","PRAYER","MAGIC","RUNECRAFTING",
         "HITPOINTS","CRAFTING","MINING","SMITHING","FISHING","COOKING",
         "FIREMAKING","WOODCUTTING","AGILITY","HERBLORE","THIEVING","FLETCHING",
-        "SLAYER","FARMING","CONSTRUCTION","HUNTER","OTHER"
+        "SLAYER","FARMING","CONSTRUCTION","HUNTER","SAILING","OTHER"
     };
 
     private final TaskApiClient apiClient;
     private final GimTasksConfig config;
+    private final SkillIconManager skillIconManager;
     private final Runnable refreshCallback;
 
     // UI components
     private JPanel taskListPanel;
+    private JScrollPane scroll;
     private JPanel addTaskForm;
     private JLabel syncLabel;
     private JPanel memberBar;
@@ -53,10 +58,12 @@ public class GimTasksPanel extends PluginPanel {
 
     private List<String> memberNames = new ArrayList<>();
 
-    public GimTasksPanel(TaskApiClient apiClient, GimTasksConfig config, Runnable refreshCallback) {
-        this.apiClient       = apiClient;
-        this.config          = config;
-        this.refreshCallback = refreshCallback;
+    public GimTasksPanel(TaskApiClient apiClient, GimTasksConfig config,
+                         SkillIconManager skillIconManager, Runnable refreshCallback) {
+        this.apiClient        = apiClient;
+        this.config           = config;
+        this.skillIconManager = skillIconManager;
+        this.refreshCallback  = refreshCallback;
 
         setBackground(COLOR_PANEL_BG);
         setLayout(new BorderLayout(0, 4));
@@ -68,11 +75,13 @@ public class GimTasksPanel extends PluginPanel {
         taskListPanel.setLayout(new BoxLayout(taskListPanel, BoxLayout.Y_AXIS));
         taskListPanel.setBackground(COLOR_PANEL_BG);
 
-        JScrollPane scroll = new JScrollPane(taskListPanel);
+        scroll = new JScrollPane(taskListPanel);
         scroll.setBorder(null);
         scroll.setBackground(COLOR_PANEL_BG);
         scroll.getViewport().setBackground(COLOR_PANEL_BG);
         scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setWheelScrollingEnabled(true);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
         add(scroll, BorderLayout.CENTER);
 
         memberBar = buildMemberBar(new ArrayList<>());
@@ -122,11 +131,17 @@ public class GimTasksPanel extends PluginPanel {
 
             taskListPanel.revalidate();
             taskListPanel.repaint();
+            attachWheelListener(taskListPanel);
+
+            // Count unassigned tasks
+            int unassigned = (int) tasks.stream()
+                .filter(t -> t.getAssignee() == null || t.getAssignee().isEmpty())
+                .count();
 
             // Update member bar
             Container footer = (Container) getComponent(getComponentCount() - 1);
             footer.removeAll();
-            footer.add(buildMemberBarContent(groupMembers), BorderLayout.CENTER);
+            footer.add(buildMemberBarContent(groupMembers, unassigned), BorderLayout.CENTER);
             footer.add(buildSyncRow(), BorderLayout.SOUTH);
             footer.revalidate();
             footer.repaint();
@@ -148,7 +163,7 @@ public class GimTasksPanel extends PluginPanel {
 
         JLabel title = new JLabel("GIM Tasks");
         title.setForeground(Color.WHITE);
-        title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 20f));
         header.add(title, BorderLayout.WEST);
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
@@ -247,32 +262,50 @@ public class GimTasksPanel extends PluginPanel {
         card.setBackground(COLOR_CARD_BG);
         card.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(task.isUrgent() ? COLOR_URGENT : COLOR_CARD_BG, 1),
-            new EmptyBorder(6, 8, 6, 8)
+            new EmptyBorder(8, 10, 8, 10)
         ));
         card.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
 
-        // Top row: name + priority badge
-        JPanel topRow = new JPanel(new BorderLayout());
-        topRow.setBackground(COLOR_CARD_BG);
-        JLabel nameLabel = new JLabel(task.getName());
-        nameLabel.setForeground(Color.WHITE);
-        nameLabel.setFont(nameLabel.getFont().deriveFont(Font.BOLD, 12f));
-        topRow.add(nameLabel, BorderLayout.CENTER);
-        if (task.isUrgent()) {
-            JLabel urgentBadge = badge("URGENT", COLOR_URGENT);
-            topRow.add(urgentBadge, BorderLayout.EAST);
-        }
-        card.add(topRow, BorderLayout.NORTH);
+        // Top section: task name + optional urgent badge on separate line
+        JPanel topSection = new JPanel();
+        topSection.setLayout(new BoxLayout(topSection, BoxLayout.Y_AXIS));
+        topSection.setBackground(COLOR_CARD_BG);
 
-        // Middle: skill, progress, assignee
+        JLabel nameLabel = new JLabel("<html>" + task.getName() + "</html>");
+        nameLabel.setForeground(Color.WHITE);
+        nameLabel.setFont(nameLabel.getFont().deriveFont(Font.BOLD, 18f));
+        topSection.add(nameLabel);
+
+        if (task.isUrgent()) {
+            JPanel urgentRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
+            urgentRow.setBackground(COLOR_CARD_BG);
+            urgentRow.add(badge("⚠ URGENT", COLOR_URGENT));
+            topSection.add(urgentRow);
+        }
+        card.add(topSection, BorderLayout.NORTH);
+
+        // Middle: skill icon + progress + assignee
         JPanel midPanel = new JPanel();
         midPanel.setLayout(new BoxLayout(midPanel, BoxLayout.Y_AXIS));
         midPanel.setBackground(COLOR_CARD_BG);
 
-        String progressText = task.getQuantityCompleted() + " / " + task.getQuantity()
-            + " (" + task.progressPercent() + "%)";
-        midPanel.add(subLabel(task.getSkill() + "  •  " + progressText));
+        // Line 1: skill icon + skill name
+        JPanel skillRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        skillRow.setBackground(COLOR_CARD_BG);
+        skillRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        BufferedImage skillIcon = getSkillIcon(task.getSkill());
+        if (skillIcon != null) {
+            skillRow.add(new JLabel(new ImageIcon(skillIcon)));
+        }
+        skillRow.add(subLabel(task.getSkill()));
+        midPanel.add(skillRow);
 
+        // Line 2: progress
+        String progressText = task.getQuantityCompleted() + " / " + task.getQuantity()
+            + "  (" + task.progressPercent() + "%)";
+        midPanel.add(subLabel(progressText));
+
+        // Line 3: assignee
         String assigneeText = task.getAssignee() != null ? task.getAssignee() : "Unassigned";
         midPanel.add(subLabel("Assignee: " + assigneeText));
 
@@ -288,38 +321,58 @@ public class GimTasksPanel extends PluginPanel {
 
         card.add(midPanel, BorderLayout.CENTER);
 
-        // Bottom row: status badge + action buttons
-        JPanel bottomRow = new JPanel(new BorderLayout(4, 0));
-        bottomRow.setBackground(COLOR_CARD_BG);
-        bottomRow.add(badge(task.getStatus(), statusColor(task.getStatus())), BorderLayout.WEST);
+        // Bottom section: status badge row + buttons row
+        JPanel bottomSection = new JPanel();
+        bottomSection.setLayout(new BoxLayout(bottomSection, BoxLayout.Y_AXIS));
+        bottomSection.setBackground(COLOR_CARD_BG);
 
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        // Status badge on its own row
+        JPanel statusRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
+        statusRow.setBackground(COLOR_CARD_BG);
+        statusRow.add(badge(task.getStatus(), statusColor(task.getStatus())));
+        bottomSection.add(statusRow);
+
+        // Buttons on their own full-width row
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 2));
         actions.setBackground(COLOR_CARD_BG);
 
-        if (!"COMPLETED".equals(task.getStatus())) {
+        if ("UNASSIGNED".equals(task.getStatus())) {
+            // Unassigned: just offer to claim it
             JButton claimBtn = tinyButton("Claim");
             claimBtn.addActionListener(e ->
                 apiClient.assignTask(task.getId(), config.playerUsername(),
                     t -> refreshCallback.run(), refreshCallback::run));
             actions.add(claimBtn);
+        } else if ("CLAIMED".equals(task.getStatus()) || "IN_PROGRESS".equals(task.getStatus())) {
+            // Active task: Done + update progress
+            JButton doneBtn = tinyButton("Done");
+            doneBtn.setBackground(COLOR_COMPLETED);
+            doneBtn.addActionListener(e ->
+                apiClient.updateStatus(task.getId(), "COMPLETED",
+                    t -> refreshCallback.run(), refreshCallback::run));
+            actions.add(doneBtn);
 
-            if ("CLAIMED".equals(task.getStatus()) || "IN_PROGRESS".equals(task.getStatus())) {
-                JButton startBtn = tinyButton("Start");
-                startBtn.addActionListener(e ->
-                    apiClient.updateStatus(task.getId(), "IN_PROGRESS",
-                        t -> refreshCallback.run(), refreshCallback::run));
-                actions.add(startBtn);
-
-                JButton doneBtn = tinyButton("Done");
-                doneBtn.setBackground(COLOR_COMPLETED);
-                doneBtn.addActionListener(e ->
-                    apiClient.updateStatus(task.getId(), "COMPLETED",
-                        t -> refreshCallback.run(), refreshCallback::run));
-                actions.add(doneBtn);
-            }
+            JButton progressBtn = tinyButton("✎ Progress");
+            progressBtn.addActionListener(e -> {
+                String input = JOptionPane.showInputDialog(
+                    this,
+                    "Enter quantity completed (max " + task.getQuantity() + "):",
+                    "Update Progress",
+                    JOptionPane.PLAIN_MESSAGE);
+                if (input == null) return;
+                try {
+                    int qty = Integer.parseInt(input.trim());
+                    qty = Math.max(0, Math.min(qty, task.getQuantity()));
+                    apiClient.updateProgress(task.getId(), qty,
+                        t -> refreshCallback.run(), refreshCallback::run);
+                } catch (NumberFormatException ex) {
+                    JOptionPane.showMessageDialog(this, "Please enter a valid number.");
+                }
+            });
+            actions.add(progressBtn);
         }
 
-        JButton delBtn = tinyButton("✕");
+        JButton delBtn = tinyButton("✕ Delete");
         delBtn.setBackground(COLOR_URGENT);
         delBtn.addActionListener(e -> {
             int choice = JOptionPane.showConfirmDialog(this,
@@ -331,8 +384,8 @@ public class GimTasksPanel extends PluginPanel {
         });
         actions.add(delBtn);
 
-        bottomRow.add(actions, BorderLayout.EAST);
-        card.add(bottomRow, BorderLayout.SOUTH);
+        bottomSection.add(actions);
+        card.add(bottomSection, BorderLayout.SOUTH);
 
         return card;
     }
@@ -353,14 +406,24 @@ public class GimTasksPanel extends PluginPanel {
     }
 
     private JPanel buildMemberBarContent(List<GroupMember> members) {
-        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+        return buildMemberBarContent(members, 0);
+    }
+
+    private JPanel buildMemberBarContent(List<GroupMember> members, int unassigned) {
+        JPanel bar = new JPanel();
+        bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
         bar.setBackground(COLOR_PANEL_BG);
+        bar.setBorder(new EmptyBorder(4, 0, 2, 0));
         for (GroupMember m : members) {
-            JLabel lbl = new JLabel(m.getUsername() + " (" + m.getTasksAssigned() + ")");
+            JLabel lbl = new JLabel(m.getUsername() + "  —  " + m.getTasksAssigned() + " assigned");
             lbl.setForeground(COLOR_SUBTEXT);
-            lbl.setFont(lbl.getFont().deriveFont(10f));
+            lbl.setFont(lbl.getFont().deriveFont(15f));
             bar.add(lbl);
         }
+        JLabel unassignedLbl = new JLabel("Unassigned  —  " + unassigned + " tasks");
+        unassignedLbl.setForeground(COLOR_UNASSIGNED);
+        unassignedLbl.setFont(unassignedLbl.getFont().deriveFont(15f));
+        bar.add(unassignedLbl);
         return bar;
     }
 
@@ -369,7 +432,7 @@ public class GimTasksPanel extends PluginPanel {
         row.setBackground(COLOR_PANEL_BG);
         syncLabel = new JLabel("Last sync: --");
         syncLabel.setForeground(COLOR_SUBTEXT);
-        syncLabel.setFont(syncLabel.getFont().deriveFont(9f));
+        syncLabel.setFont(syncLabel.getFont().deriveFont(13f));
         row.add(syncLabel);
         return row;
     }
@@ -416,6 +479,27 @@ public class GimTasksPanel extends PluginPanel {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    private void attachWheelListener(Component comp) {
+        comp.addMouseWheelListener(e -> {
+            JScrollBar bar = scroll.getVerticalScrollBar();
+            bar.setValue(bar.getValue() + (int) (e.getPreciseWheelRotation() * bar.getUnitIncrement() * 3));
+        });
+        if (comp instanceof Container) {
+            for (Component child : ((Container) comp).getComponents()) {
+                attachWheelListener(child);
+            }
+        }
+    }
+
+    private BufferedImage getSkillIcon(String skillName) {
+        try {
+            Skill skill = Skill.valueOf(skillName.toUpperCase());
+            return skillIconManager.getSkillImage(skill, true);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private Color statusColor(String status) {
         switch (status) {
             case "CLAIMED":     return COLOR_CLAIMED;
@@ -430,7 +514,7 @@ public class GimTasksPanel extends PluginPanel {
         lbl.setOpaque(true);
         lbl.setBackground(color);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(lbl.getFont().deriveFont(Font.BOLD, 9f));
+        lbl.setFont(lbl.getFont().deriveFont(Font.BOLD, 14f));
         lbl.setBorder(new EmptyBorder(1, 5, 1, 5));
         return lbl;
     }
@@ -438,7 +522,8 @@ public class GimTasksPanel extends PluginPanel {
     private JLabel subLabel(String text) {
         JLabel lbl = new JLabel(text);
         lbl.setForeground(COLOR_SUBTEXT);
-        lbl.setFont(lbl.getFont().deriveFont(10f));
+        lbl.setFont(lbl.getFont().deriveFont(15f));
+        lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
         return lbl;
     }
 
@@ -448,7 +533,7 @@ public class GimTasksPanel extends PluginPanel {
         btn.setForeground(Color.WHITE);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(btn.getFont().deriveFont(Font.BOLD, 12f));
+        btn.setFont(btn.getFont().deriveFont(Font.BOLD, 18f));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return btn;
     }
@@ -459,8 +544,8 @@ public class GimTasksPanel extends PluginPanel {
         btn.setForeground(Color.WHITE);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(btn.getFont().deriveFont(9f));
-        btn.setMargin(new Insets(1, 4, 1, 4));
+        btn.setFont(btn.getFont().deriveFont(13f));
+        btn.setMargin(new Insets(2, 6, 2, 6));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return btn;
     }
